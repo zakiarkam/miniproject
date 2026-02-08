@@ -53,16 +53,6 @@ export const authOptions: NextAuthOptions = {
       },
     }),
 
-    GoogleProvider({
-      clientId:
-        process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    }),
-
-    FacebookProvider({
-      clientId: process.env.FACEBOOK_CLIENT_ID,
-      clientSecret: process.env.FACEBOOK_CLIENT_SECRET,
-    }),
     // AppleProvider({
     //   clientId: process.env.APPLE_ID,
     //   clientSecret: process.env.APPLE_SECRET,
@@ -88,7 +78,7 @@ export const authOptions: NextAuthOptions = {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ email, name, image }),
-          }
+          },
         ).then((res) => res.json());
 
         user.role = data.user.role;
@@ -125,7 +115,6 @@ export const authOptions: NextAuthOptions = {
       return true;
     },
 
-    
     async session(params: { session: any; token: JWT; user: any }) {
       // if (params.session.user) {
       //   params.session.user.email = params.token.email;
@@ -139,7 +128,6 @@ export const authOptions: NextAuthOptions = {
       params.session.user._id = params.token.id;
       return params.session;
     },
-
 
     async jwt(params: {
       token: any;
