@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectMongoDB from "../../../../../lib/mongo/mongodb";
 import Post from "@/models/post";
+import { sanitizeText, sanitizeURL } from "../../../../../lib/security/sanitize";
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,15 +13,20 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-  
+
+    // XSS Prevention - R4 Policy: Sanitize all text inputs for community posts
+    const sanitizedUserName = sanitizeText(userName);
+    const sanitizedUserImage = sanitizeURL(userImage);
+    const sanitizedDescription = sanitizeText(description);
+    const sanitizedImage = sanitizeURL(image);
 
     connectMongoDB();
     await Post.create({
-      userName,
-      userImage,
+      userName: sanitizedUserName,
+      userImage: sanitizedUserImage,
       eventId,
-      description,
-      image,
+      description: sanitizedDescription,
+      image: sanitizedImage,
     });
     return NextResponse.json(
       { message: "Post Created Successfully" },
