@@ -1,10 +1,24 @@
 import React from "react";
-import DOMPurify from "dompurify";
+import SandboxedIframe from "@/components/security/SandboxedIframe";
 
-function RenderedContent({ content }) {
-  const sanitizedContent = DOMPurify.sanitize(content); // Sanitize the HTML
-
-  return <div dangerouslySetInnerHTML={{ __html: sanitizedContent }} />;
+/**
+ * Renders user-generated HTML content safely
+ * R4 Policy - Secure Rendering of Host Pages
+ *
+ * IMPORTANT: Content is sanitized on the server before storage.
+ * This component renders it in a sandboxed iframe for defense-in-depth.
+ */
+function RenderedContent({ content, isApprovedTemplate = false }) {
+  // Use sandboxed iframe instead of dangerouslySetInnerHTML
+  // This provides an additional security layer even after server-side sanitization
+  return (
+    <SandboxedIframe
+      htmlContent={content}
+      isApprovedTemplate={isApprovedTemplate}
+      title="Event page content"
+      className="min-h-screen"
+    />
+  );
 }
 
 export default RenderedContent;

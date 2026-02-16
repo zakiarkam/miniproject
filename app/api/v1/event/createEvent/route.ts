@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectMongoDB from "../../../../../lib/mongo/mongodb";
 import Event from "../../../../../models/eventModel";
+import { sanitizeText, sanitizeURL } from "../../../../../lib/security/sanitize";
 
 export async function POST(req: NextRequest) {
   const {
@@ -17,22 +18,29 @@ export async function POST(req: NextRequest) {
     endTime,
   } = await req.json();
 
+  // XSS Prevention - R4 Policy: Sanitize all text inputs
+  const sanitizedEventName = sanitizeText(eventName);
+  const sanitizedEventLocation = sanitizeText(eventLocation);
+  const sanitizedDescription = sanitizeText(description);
+  const sanitizedCoverImage = sanitizeURL(coverImage);
+  const sanitizedDashboardImage = sanitizeURL(dashboardImage);
+
   connectMongoDB();
   const event = await Event.create({
-    eventName,
+    eventName: sanitizedEventName,
     selectedTab,
-    eventLocation,
+    eventLocation: sanitizedEventLocation,
     eventStartDate,
     startTime,
-    description,
-    coverImage,
-    dashboardImage,
+    description: sanitizedDescription,
+    coverImage: sanitizedCoverImage,
+    dashboardImage: sanitizedDashboardImage,
     organizationId,
     eventEndDate,
     endTime,
   });
 
-  
+
   if (!event) {
     return NextResponse.json(
       { message: "Event Creation Failed" },

@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import connectMongoDB from "../../../../../lib/mongo/mongodb";
 
 import Comment from "@/models/comment";
+import { sanitizeText, sanitizeURL } from "../../../../../lib/security/sanitize";
 
 export async function POST(req: NextRequest) {
   const { userId,userName, userImage, postId, description } = await req.json();
-  
+
 
   await connectMongoDB();
 
@@ -16,12 +17,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // XSS Prevention - R4 Policy: Sanitize all text inputs for comments
+  const sanitizedUserName = sanitizeText(userName);
+  const sanitizedUserImage = sanitizeURL(userImage);
+  const sanitizedDescription = sanitizeText(description);
+
   const comment = await Comment.create({
     userId,
-    userName,
-    userImage,
+    userName: sanitizedUserName,
+    userImage: sanitizedUserImage,
     postId,
-    description,
+    description: sanitizedDescription,
   });
 
   return NextResponse.json(
