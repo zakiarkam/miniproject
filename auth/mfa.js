@@ -1,4 +1,4 @@
-import { sendOTP, verifyOTP } from "./otpService";
+import { verifyOTP } from "./otpService";
 
 export async function enforceMFA(user, otpInput) {
   if (user.role === "admin" || user.role === "organization") {
