@@ -54,8 +54,10 @@ function verifyPayhereSignature(params: {
   status_code: string;
   md5sig: string;
 }): boolean {
+  // NOSONAR: MD5 is REQUIRED by PayHere API spec (developers.payhere.lk). Not used for passwords.
+  // R3 Policy 5.1.1 — PayHere signature: md5(merchant_id+order_id+amount+currency+status_code+md5(secret))
   const hashedSecret = crypto
-    .createHash("md5")
+    .createHash("md5") // NOSONAR — PayHere spec compliance
     .update(MERCHANT_SECRET)
     .digest("hex")
     .toUpperCase();
@@ -69,7 +71,7 @@ function verifyPayhereSignature(params: {
     hashedSecret;
 
   const localHash = crypto
-    .createHash("md5")
+    .createHash("md5") // NOSONAR — PayHere spec compliance
     .update(rawSignature)
     .digest("hex")
     .toUpperCase();
@@ -85,7 +87,8 @@ async function generateUniqueTicketCode(): Promise<string> {
   const existingSet = new Set(existingCodes);
   let code: string;
   do {
-    code = Math.floor(10000000 + Math.random() * 90000000).toString();
+    // R3 Policy 5.1 — Use crypto.randomInt (CSPRNG) instead of Math.random (PRNG)
+    code = crypto.randomInt(10000000, 99999999).toString();
   } while (existingSet.has(code));
   return code;
 }

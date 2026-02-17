@@ -20,8 +20,9 @@ export async function POST(req: NextRequest) {
     }
 
     // R3 Policy 5.1.1 — Generate hash server-side only
+    // NOSONAR: MD5 is REQUIRED by PayHere API spec (developers.payhere.lk). Not used for passwords.
     const hashedSecret = crypto
-      .createHash("md5")
+      .createHash("md5") // NOSONAR — PayHere spec compliance
       .update(MERCHANT_SECRET)
       .digest("hex")
       .toUpperCase();
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
       .replaceAll(",", "");
 
     const hash = crypto
-      .createHash("md5")
+      .createHash("md5") // NOSONAR — PayHere spec compliance
       .update(MERCHANT_ID + orderId + amountFormatted + currency + hashedSecret)
       .digest("hex")
       .toUpperCase();
