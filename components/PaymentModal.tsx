@@ -1,14 +1,17 @@
+// R3 Policy 5.1 — Secure PaymentModal
+// - Merchant secret removed from client (hash generated server-side)
+// - PENDING order created before PayHere window opens
+// - notify_url points to server-side callback handler
+// - Ticket issuance handled by server callback, NOT client onCompleted
 "use client";
 import React, { useEffect, useRef } from "react";
 import { useState } from "react";
 
-import crypto from "crypto";
-import { generateQRCodeImage } from "@/util/helper";
 import { error, success } from "@/util/Toastify";
 
 import { useParams } from "next/navigation";
 import { getSession } from "next-auth/react";
-import { FetchPost, FetchPut, FetchGet } from "@/hooks/useFetch";
+import { FetchPost } from "@/hooks/useFetch";
 import { TicketArray } from "@/app/event/host/[id]/components/HostSideBar";
 
 declare global {
@@ -39,70 +42,21 @@ type PaymentModalProps = {
 const PaymentModal = (props: PaymentModalProps) => {
   const scriptRef = useRef<any>();
 
-  const key = "updatable";
   const orderId = props.orderId;
   const name = props.item;
   const amount = props.amount;
-
-  // localhost
-  // const merchantId = "1227067";
-
-  // production
-  const merchantId = "1226229";
-
-  // const merchantSecret = "OTA4MzgwNDQ5MzAzODA0NTg5MjYzODIxNjAwODIxOTUwNDczMjk=";
-  // MzU5NjU2Nzc1NDE4NTEwMDg0MjM1NTU2Mzk5NTYzNzI3ODQ0MTM3
-
-  // for production
-  const merchantSecret = "OTA4MzgwNDQ5MzAzODA0NTg5MjYzODIxNjAwODIxOTUwNDczMjk=";
-
-  // for localhost
-  // const merchantSecret = "NDI1MjQyMDcxMTE1MTY0MjYzNzcyNzUwMDUxNjUzNDU1NTYzMjgw";
-
   const currency = props.currency || "LKR";
 
-  const hashedSecret = crypto
-    .createHash("md5")
-    .update(merchantSecret)
-    .digest("hex")
-    .toUpperCase();
+  // R3 Policy 5.1.1 — Merchant secret REMOVED from client code.
+  // Hash and merchantId are fetched from the server at payment time.
+  const [paymentHash, setPaymentHash] = useState<string>("");
+  const [merchantId, setMerchantId] = useState<string>("");
+  const [isReady, setIsReady] = useState(false);
 
-  let amountFormatted = amount
-    .toLocaleString("en-us", { minimumFractionDigits: 2 })
-    .replaceAll(",", "");
-
-  const hash = crypto
-    .createHash("md5")
-    .update(merchantId + orderId + amountFormatted + currency + hashedSecret)
-    .digest("hex")
-    .toUpperCase();
-
-  var payment = {
-    sandbox: true, // if the account is sandbox or real
-    merchant_id: merchantId, // Replace your Merchant ID
-    // return_url: "http://localhost:3000/",
-    // cancel_url: "http://localhost:3000/",
-    // notify_url: "http://localhost:3000/",
-    return_url: "https://events-now.vercel.app/",
-    cancel_url: "https://events-now.vercel.app/",
-    notify_url: "https://events-now.vercel.app/",
-    order_id: orderId,
-    items: name,
-    amount: amount,
-    currency: currency,
-    first_name: props.first_name,
-    last_name: props.last_name,
-    email: props.email,
-    phone: props.phone,
-    address: props.address,
-    city: props.city,
-    country: props.country,
-    hash: hash,
-  };
   const params = useParams<{ id: string }>();
   const [userId, setUserId] = useState<string>("");
-  // const [ticketCode,setTicketCode] = useState("");
 
+  // Fetch userId on mount
   useEffect(() => {
     const getUserId = async () => {
       const session = await getSession();
@@ -111,21 +65,15 @@ const PaymentModal = (props: PaymentModalProps) => {
           `${process.env.NEXT_PUBLIC_URL}/api/v1/user/getUserId`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              email: session?.user?.email,
-            }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: session?.user?.email }),
           }
         );
-
         if (!res.ok) {
           error("Error fetching user id");
+          return;
         }
-
         const data = await res.json();
-
         setUserId(data.id);
       } catch (e) {
         error("Error fetching user id");
@@ -134,99 +82,21 @@ const PaymentModal = (props: PaymentModalProps) => {
     getUserId();
   }, []);
 
+  // Load PayHere SDK script
   useEffect(() => {
-    // SCRIPT THE jdk
     const script = document.createElement("script");
     script.src = "https://www.payhere.lk/lib/payhere.js";
     script.async = true;
 
-    // if payment success
     script.onload = () => {
-      // PayHere script is loaded, initialize event listeners
+      // R3 Policy 5.1.5 — onCompleted only shows confirmation to the user.
+      // Actual ticket issuance & income update are handled by the server-side
+      // notify callback (POST /api/v1/payment/notify). Never trust client status.
       window.payhere.onCompleted = async function onCompleted(
         paymentId: string
       ) {
-        {
-          const exTicketCodes = await FetchGet({
-            endpoint: "buyTicket/getAllTicketCodes",
-          });
-
-          props.ticketArrTemp.map(async (ticket: TicketArray) => {
-            // get all excist ticket Codes
-
-            //generate code
-            let ticketCode = "";
-            while (true) {
-              const randomCode = Math.floor(
-                10000000 + Math.random() * 90000000
-              ).toString();
-              if (!exTicketCodes.data.includes(randomCode)) {
-                // setTicketCode(randomCode);
-                ticketCode = randomCode;
-
-                break;
-              }
-            }
-
-            //store ticket buy data
-            try {
-              const value = {
-                useId: userId,
-                eventId: params.id,
-                class: ticket.typeId,
-                classType: ticket.type,
-                ticketCode: ticketCode,
-              };
-
-              const qrImg = await generateQRCodeImage(JSON.stringify(value));
-
-              const qrdata = await FetchPost({
-                endpoint: "event/sendQrCode",
-                body: {
-                  qr: qrImg,
-                  userid: userId,
-                  ticketCode: ticketCode,
-                },
-              });
-
-              if (qrdata !== "Email sent successfully") {
-                error("server error");
-                return;
-              }
-
-              const buyTicketData = await FetchPost({
-                endpoint: "buyTicket/userBuyTicket",
-                body: {
-                  ticketId: ticket,
-                  eventId: params.id,
-                  userId: userId,
-                  ticketCode: ticketCode,
-                },
-              });
-
-              if (buyTicketData == "user buy ticket Failed,try again") {
-                error("user buy ticket Failed,try again");
-                return;
-              }
-              success("user buy ticket successfully");
-            } catch (e) {
-              console.log(e);
-              error(e);
-            }
-          });
-        }
-
-        const updateData = await FetchPut({
-          endpoint: `event/payment`,
-          body: {
-            id: params.id,
-            amount: props.totalPrice,
-          },
-        });
-
-        success("Payment completed");
+        success("Payment completed! Your tickets will be emailed shortly.");
         props.setIsActiveProceedTicketModal(false);
-
         props.setTicketArrTemp([]);
         props.setTotalPrice(0);
       };
@@ -239,17 +109,96 @@ const PaymentModal = (props: PaymentModalProps) => {
         error(e);
       };
     };
-    scriptRef.current = script;
 
+    scriptRef.current = script;
     document.body.appendChild(script);
 
     return () => {
       document.body.removeChild(script);
     };
-  }, [params.id, props.ticketArrTemp, props.totalPrice, userId, props]);
+  }, [props]);
 
-  function pay() {
-    window.payhere.startPayment(payment);
+  /**
+   * R3 Policy 5.1.2 — Create PENDING order + get server-generated hash,
+   * then open PayHere payment window.
+   */
+  async function pay() {
+    if (!userId) {
+      error("User not loaded. Please try again.");
+      return;
+    }
+
+    try {
+      // Step 1: Create a PENDING PaymentOrder on the server
+      const orderRes = await FetchPost({
+        endpoint: "payment/create-order",
+        body: {
+          orderId,
+          userId,
+          eventId: params.id,
+          tickets: props.ticketArrTemp.map((t: TicketArray) => ({
+            typeId: t.typeId,
+            classType: t.type,
+            quantity: 1,
+          })),
+          amount: props.totalPrice,
+          currency,
+        },
+      });
+
+      if (!orderRes?.success) {
+        error("Failed to create payment order");
+        return;
+      }
+
+      // Step 2: Get hash from server (merchant secret stays server-side)
+      const hashRes = await fetch(
+        `${process.env.NEXT_PUBLIC_URL}/api/v1/payment/generate-hash`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId,
+            amount: props.totalPrice,
+            currency,
+          }),
+        }
+      );
+
+      if (!hashRes.ok) {
+        error("Failed to generate payment hash");
+        return;
+      }
+
+      const hashData = await hashRes.json();
+
+      // Step 3: Open PayHere with server-generated hash
+      // R3 Policy 5.1 — notify_url points to the secure server callback
+      const payment = {
+        sandbox: true,
+        merchant_id: hashData.merchantId,
+        return_url: `${process.env.NEXT_PUBLIC_URL}/`,
+        cancel_url: `${process.env.NEXT_PUBLIC_URL}/`,
+        notify_url: `${process.env.NEXT_PUBLIC_URL}/api/v1/payment/notify`,
+        order_id: orderId,
+        items: name,
+        amount: props.totalPrice,
+        currency: currency,
+        first_name: props.first_name,
+        last_name: props.last_name,
+        email: props.email,
+        phone: props.phone,
+        address: props.address,
+        city: props.city,
+        country: props.country,
+        hash: hashData.hash,
+      };
+
+      window.payhere.startPayment(payment);
+    } catch (e) {
+      console.error("Payment initiation error:", e);
+      error("Failed to initiate payment");
+    }
   }
 
   return (
