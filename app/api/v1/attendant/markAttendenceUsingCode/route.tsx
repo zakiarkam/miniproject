@@ -1,54 +1,185 @@
+import { Types } from "mongoose";
+import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
 import connectMongoDB from "@/lib/mongo/mongodb";
+import { authOptions } from "@/lib/auth/auth";
 import Attendant from "@/models/attendees";
 import BuyTicket from "@/models/buyTicket";
+import { authorizeEventAction } from "@/lib/security/eventAuthorization";
+import {
+  isAttendanceRateLimited,
+  logAttendanceAttempt,
+} from "@/lib/security/audit";
 
-import { NextRequest, NextResponse } from "next/server";
-import { json } from "stream/consumers";
+const ATTENDANCE_PERMISSIONS = ["Mark Attendance", "Manage Event"];
 
 export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const scannerUserId = (session?.user as any)?._id;
+  const scannerRole = (session?.user as any)?.role;
+
+  if (!scannerUserId) {
+    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+  }
+
   const { ticketCode, eventId } = await req.json();
+  if (!eventId || !ticketCode || typeof ticketCode !== "string") {
+    return NextResponse.json({ message: "Invalid request payload" }, { status: 400 });
+  }
+  if (!/^\d{8}$/.test(ticketCode)) {
+    return NextResponse.json({ message: "Invalid Ticket Code" }, { status: 200 });
+  }
 
   try {
     connectMongoDB();
 
-    const ticketDetails = await BuyTicket.findOne({
+    const authResult = await authorizeEventAction({
       eventId,
-      ticketCode: ticketCode,
+      userId: scannerUserId,
+      userRole: scannerRole,
+      requiredPermissions: ATTENDANCE_PERMISSIONS,
+    });
+
+    if (!authResult.allowed) {
+      await logAttendanceAttempt({
+        ticketCode,
+        eventId,
+        scannerUserId,
+        channel: "code",
+        result: "failure",
+        reason: `unauthorized_${authResult.reason.toLowerCase()}`,
+      });
+      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    }
+
+    const isRateLimited = await isAttendanceRateLimited({
+      scannerUserId,
+      eventId,
+      maxAttempts: 60,
+      windowMs: 60 * 1000,
+    });
+
+    if (isRateLimited) {
+      await logAttendanceAttempt({
+        ticketCode,
+        eventId,
+        scannerUserId,
+        channel: "code",
+        result: "failure",
+        reason: "rate_limited",
+      });
+      return NextResponse.json(
+        { message: "Too many attendance attempts. Try again shortly." },
+        { status: 429 }
+      );
+    }
+
+    const ticketDetails: any = await BuyTicket.findOne({
+      eventId,
+      ticketCode,
     }).populate("ticketId");
 
     if (!ticketDetails) {
-      return NextResponse.json(
-        { message: "Invalid Ticket Code" },
-        { status: 400 }
-      );
+      await logAttendanceAttempt({
+        ticketCode,
+        eventId,
+        scannerUserId,
+        channel: "code",
+        result: "failure",
+        reason: "invalid_ticket_code",
+      });
+      return NextResponse.json({ message: "Invalid Ticket Code" }, { status: 200 });
     }
 
-    if (ticketDetails.isAttendentMarked) {
+    if (["cancelled", "refunded"].includes(ticketDetails.status)) {
+      await logAttendanceAttempt({
+        ticketCode,
+        eventId,
+        attendeeUserId: ticketDetails.userId?.toString(),
+        scannerUserId,
+        channel: "code",
+        result: "failure",
+        reason: "invalid_ticket_status",
+      });
       return NextResponse.json(
-        { message: "Ticket Already Marked" },
+        { message: "Ticket is not valid for attendance" },
         { status: 200 }
       );
     }
 
-    ticketDetails.isAttendentMarked = true;
-    await ticketDetails.save();
+    const updatedTicket = await BuyTicket.findOneAndUpdate(
+      {
+        _id: ticketDetails._id,
+        isAttendentMarked: false,
+      },
+      {
+        $set: { isAttendentMarked: true },
+      },
+      { new: true }
+    );
 
-    const attendant = await Attendant.create({
-      ticketType: ticketDetails.ticketId.classType,
-      eventId: ticketDetails.eventId,
-      userId: ticketDetails.userId,
+    if (!updatedTicket) {
+      await logAttendanceAttempt({
+        ticketCode,
+        eventId,
+        attendeeUserId: ticketDetails.userId?.toString(),
+        scannerUserId,
+        channel: "code",
+        result: "failure",
+        reason: "ticket_already_marked",
+      });
+      return NextResponse.json({ message: "Ticket Already Marked" }, { status: 200 });
+    }
+
+    const ticketOwnerId = ticketDetails.userId?.toString() || "";
+    if (!Types.ObjectId.isValid(ticketOwnerId)) {
+      await logAttendanceAttempt({
+        ticketCode,
+        eventId,
+        scannerUserId,
+        channel: "code",
+        result: "failure",
+        reason: "invalid_ticket_owner",
+      });
+      return NextResponse.json({ message: "Invalid Ticket Code" }, { status: 200 });
+    }
+
+    const ticketType = ticketDetails?.ticketId?.classType || "Unknown";
+    const attendant = await Attendant.findOneAndUpdate(
+      {
+        eventId: ticketDetails.eventId,
+        userId: ticketOwnerId,
+      },
+      {
+        $setOnInsert: {
+          ticketType,
+          eventId: ticketDetails.eventId,
+          userId: ticketOwnerId,
+        },
+      },
+      { new: true, upsert: true }
+    );
+
+    await logAttendanceAttempt({
+      ticketCode,
+      eventId,
+      attendeeUserId: ticketOwnerId,
+      scannerUserId,
+      channel: "code",
+      result: "success",
+      reason: "attendance_marked",
     });
 
-    if (!attendant) {
-      return NextResponse.json(
-        { message: "attendant Creation Failed" },
-        { status: 200 }
-      );
-    }
-
-    return NextResponse.json(ticketDetails, { status: 201 });
-    // return NextResponse.json({message:"attendance marked successfully"},{status:200});
-  } catch (e) {
-    return NextResponse.json({ message: "server error" }, { status: 400 });
+    return NextResponse.json(attendant, { status: 201 });
+  } catch (error) {
+    await logAttendanceAttempt({
+      ticketCode,
+      eventId,
+      scannerUserId,
+      channel: "code",
+      result: "failure",
+      reason: "server_error",
+    });
+    return NextResponse.json({ message: "server error" }, { status: 500 });
   }
 }

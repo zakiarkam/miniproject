@@ -3,12 +3,11 @@ import React, { useEffect, useRef } from "react";
 import { useState } from "react";
 
 import crypto from "crypto";
-import { generateQRCodeImage } from "@/util/helper";
 import { error, success } from "@/util/Toastify";
 
 import { useParams } from "next/navigation";
 import { getSession } from "next-auth/react";
-import { FetchPost, FetchPut, FetchGet } from "@/hooks/useFetch";
+import { FetchPost, FetchPut } from "@/hooks/useFetch";
 import { TicketArray } from "@/app/event/host/[id]/components/HostSideBar";
 
 declare global {
@@ -38,8 +37,6 @@ type PaymentModalProps = {
 
 const PaymentModal = (props: PaymentModalProps) => {
   const scriptRef = useRef<any>();
-
-  const key = "updatable";
   const orderId = props.orderId;
   const name = props.item;
   const amount = props.amount;
@@ -143,80 +140,45 @@ const PaymentModal = (props: PaymentModalProps) => {
     // if payment success
     script.onload = () => {
       // PayHere script is loaded, initialize event listeners
-      window.payhere.onCompleted = async function onCompleted(
-        paymentId: string
-      ) {
-        {
-          const exTicketCodes = await FetchGet({
-            endpoint: "buyTicket/getAllTicketCodes",
-          });
-
-          props.ticketArrTemp.map(async (ticket: TicketArray) => {
-            // get all excist ticket Codes
-
-            //generate code
-            let ticketCode = "";
-            while (true) {
-              const randomCode = Math.floor(
-                10000000 + Math.random() * 90000000
-              ).toString();
-              if (!exTicketCodes.data.includes(randomCode)) {
-                // setTicketCode(randomCode);
-                ticketCode = randomCode;
-
-                break;
-              }
-            }
-
-            //store ticket buy data
-            try {
-              const value = {
-                useId: userId,
+      window.payhere.onCompleted = async function onCompleted() {
+        for (const ticket of props.ticketArrTemp) {
+          try {
+            const buyTicketData = await FetchPost({
+              endpoint: "buyTicket/userBuyTicket",
+              body: {
+                ticketId: ticket,
                 eventId: params.id,
-                class: ticket.typeId,
-                classType: ticket.type,
-                ticketCode: ticketCode,
-              };
+                userId: userId,
+              },
+            });
 
-              const qrImg = await generateQRCodeImage(JSON.stringify(value));
-
-              const qrdata = await FetchPost({
-                endpoint: "event/sendQrCode",
-                body: {
-                  qr: qrImg,
-                  userid: userId,
-                  ticketCode: ticketCode,
-                },
-              });
-
-              if (qrdata !== "Email sent successfully") {
-                error("server error");
-                return;
-              }
-
-              const buyTicketData = await FetchPost({
-                endpoint: "buyTicket/userBuyTicket",
-                body: {
-                  ticketId: ticket,
-                  eventId: params.id,
-                  userId: userId,
-                  ticketCode: ticketCode,
-                },
-              });
-
-              if (buyTicketData == "user buy ticket Failed,try again") {
-                error("user buy ticket Failed,try again");
-                return;
-              }
-              success("user buy ticket successfully");
-            } catch (e) {
-              console.log(e);
-              error(e);
+            const ticketCode = buyTicketData?.ticketCode;
+            if (!ticketCode) {
+              error("user buy ticket Failed,try again");
+              continue;
             }
-          });
+
+            const qrdata = await FetchPost({
+              endpoint: "event/sendQrCode",
+              body: {
+                ticketCode,
+                eventId: params.id,
+              },
+            });
+
+            if (qrdata?.message !== "Email sent successfully") {
+              error(qrdata?.message || "server error");
+              continue;
+            }
+
+            success("user buy ticket successfully");
+          } catch (e: any) {
+            console.log(e);
+            error("ticket purchase flow failed");
+          }
         }
 
-        const updateData = await FetchPut({
+        await FetchPut({
           endpoint: `event/payment`,
           body: {
             id: params.id,

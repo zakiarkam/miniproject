@@ -24,6 +24,11 @@ const BuyticketSchema = new mongoose.Schema({
     type: String,
     required: [true, "Please enter ticketCode"],
   },
+  status: {
+    type: String,
+    enum: ["active", "cancelled", "refunded"],
+    default: "active",
+  },
   isAttendentMarked: {
     type: Boolean,
     default: false,

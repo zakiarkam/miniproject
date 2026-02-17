@@ -1,7 +1,6 @@
 import React from "react";
 import Container from "./Container";
 import { error, success } from "@/util/Toastify";
-import { FetchPost } from "@/hooks/useFetch";
 import { useParams } from "next/navigation";
 import Image from "next/image";
 
@@ -31,17 +30,12 @@ export default function Code() {
             "Content-Type": "application/json",
           },
         });
+        const ticketData = await res.json();
         if (!res.ok) {
-          error("Invalid Ticket Code");
+          error(ticketData?.message || "Unable to mark attendance");
           setIsMarking(false);
           return;
         }
-
-        // const res = await FetchPost({
-        //     endpoint:`attendant/markAttendenceUsingCode`,
-        //     body:{ticketCode},
-        // })
-        const ticketData = await res.json();
 
         if (!ticketData) {
           error("Invalid Ticket Code");
@@ -67,9 +61,11 @@ export default function Code() {
         }
       } catch (e) {
         console.log(e);
+        setIsMarking(false);
       }
     } else {
       error("Invalid Ticket Code");
+      setIsMarking(false);
     }
   };
   return (
